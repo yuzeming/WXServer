@@ -194,99 +194,105 @@ WX_Server_Main (void *cls, struct MHD_Connection *connection,
 {
     struct MHD_Response *response;
     int ret = -1;
-//    printf ("New %s request for %s using version %s\n", method, url, version);
+    //    printf ("New %s request for %s using version %s\n", method, url, version);
 
-    struct WX_Signature sig;
-    bzero(&sig,sizeof(struct WX_Signature));
-/*
-    if (WX_checkSignature(connection,&sig))
+    if (StrStartsWith(url,"/wx_api"))
     {
-        const char *page = "<html><body>BAD_REQUEST</body></html>";
-        response = MHD_create_response_from_buffer (strlen (page), (void *) page,MHD_RESPMEM_PERSISTENT);
-        ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
-        MHD_destroy_response (response);
-        deepFree(sig);
-        return ret;
-    }
 
-    if (strcmp("GET",method)==0)
-    {
-        response = MHD_create_response_from_buffer(strlen(sig.echostr),(void *) sig.echostr,MHD_RESPMEM_MUST_COPY);
-        ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
-        MHD_destroy_response(response);
-        deepFree(sig);
-        return ret;
-    }
-*/
-    deepFree(sig);
+        struct WX_Signature sig;
+        bzero(&sig,sizeof(struct WX_Signature));
 
-    struct WX_Massage massage;
-    bzero(&massage,sizeof(struct WX_Massage));
-
-    struct WX_Massage ret_msg;
-    bzero(&ret_msg,sizeof(struct WX_Massage));
-
-    if (strcmp("POST",method)==0)
-    {
-        struct WX_XML_Buff *post_buff;
-        if (*con_cls==NULL)
+        if (WX_checkSignature(connection,&sig))
         {
-            post_buff = (*con_cls) = malloc(sizeof(struct WX_XML_Buff));
-            bzero(*con_cls,sizeof(struct WX_XML_Buff));
-            post_buff->buff = malloc(XMLBUFSIZ);
-            post_buff->len = 0;
-            return MHD_YES;
+            const char *page = "<html><body>BAD_REQUEST</body></html>";
+            response = MHD_create_response_from_buffer (strlen (page), (void *) page,MHD_RESPMEM_PERSISTENT);
+            ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, response);
+            MHD_destroy_response (response);
+            deepFree(sig);
+            return ret;
         }
-        else
-            post_buff =(struct WX_XML_Buff *)(*con_cls);
 
-//        printf("%s",upload_data);
-
-        if (*upload_data_size != 0)
+        if (StrEq(method,"GET"))
         {
-            if (post_buff->len + *upload_data_size<XMLBUFSIZ)
+            response = MHD_create_response_from_buffer(strlen(sig.echostr),(void *) sig.echostr,MHD_RESPMEM_MUST_COPY);
+            ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+            MHD_destroy_response(response);
+            deepFree(sig);
+            return ret;
+        }
+
+        deepFree(sig);
+
+        //WX Post
+        if (StrEq(method,"POST"))
+        {
+            struct WX_Massage massage;
+            bzero(&massage,sizeof(struct WX_Massage));
+
+            struct WX_Massage ret_msg;
+            bzero(&ret_msg,sizeof(struct WX_Massage));
+
+            struct WX_XML_Buff *post_buff;
+            if (*con_cls==NULL)
             {
-                memcpy(post_buff->buff+post_buff->len,upload_data,*upload_data_size);
-                post_buff->len += *upload_data_size;
-                *upload_data_size = 0;
+                post_buff = (*con_cls) = malloc(sizeof(struct WX_XML_Buff));
+                bzero(*con_cls,sizeof(struct WX_XML_Buff));
+                post_buff->buff = malloc(XMLBUFSIZ);
+                post_buff->len = 0;
                 return MHD_YES;
             }
             else
-                return MHD_NO;
-        }
-        else
-        {
-            post_buff->buff[post_buff->len]='\0';
+                post_buff =(struct WX_XML_Buff *)(*con_cls);
 
-            ReadWXMassage(post_buff->buff,post_buff->len,&massage);
+            //        printf("%s",upload_data);
 
-            ret_msg.FromUserName = deepStrCopy(massage.ToUserName);
-            ret_msg.ToUserName = deepStrCopy(massage.FromUserName);
-            ret_msg.CreateTime = deepStrCopy(massage.CreateTime);
+            if (*upload_data_size != 0)
+            {
+                if (post_buff->len + *upload_data_size<XMLBUFSIZ)
+                {
+                    memcpy(post_buff->buff+post_buff->len,upload_data,*upload_data_size);
+                    post_buff->len += *upload_data_size;
+                    *upload_data_size = 0;
+                    return MHD_YES;
+                }
+                else
+                    return MHD_NO;
+            }
+            else
+            {
+                post_buff->buff[post_buff->len]='\0';
 
-            if (strcmp(massage.MsgType,"text")==0)
-                WX_Text_Header(&massage,&ret_msg);
+                ReadWXMassage(post_buff->buff,post_buff->len,&massage);
 
+                ret_msg.FromUserName = deepStrCopy(massage.ToUserName);
+                ret_msg.ToUserName = deepStrCopy(massage.FromUserName);
+                ret_msg.CreateTime = deepStrCopy(massage.CreateTime);
 
-            char buff[XMLBUFSIZ+1];
-            buff[0]='\0';
-            WriteWXMassage(buff,XMLBUFSIZ,&ret_msg);
-            buff[XMLBUFSIZ]='\0';
+                if (strcmp(massage.MsgType,"text")==0)
+                    WX_Text_Header(&massage,&ret_msg);
 
-            response = MHD_create_response_from_buffer(strlen(buff),(void *) buff,MHD_RESPMEM_MUST_COPY);
-            ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
-            MHD_destroy_response(response);
+                char *buff=malloc(XMLBUFSIZ+1);
+                buff[0]='\0';
+                WriteWXMassage(buff,XMLBUFSIZ,&ret_msg);
+                buff[XMLBUFSIZ]='\0';
 
-            deepFree(massage);
-            deepFree(ret_msg);
-            return ret;
+                response = MHD_create_response_from_buffer(strlen(buff),(void *) buff,MHD_RESPMEM_MUST_FREE);
+                ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
+                MHD_destroy_response(response);
+
+                deepFree(massage);
+                deepFree(ret_msg);
+                return ret;
+            }
         }
     }
 
+    // 404 Not Found
     const char *page = "<html><body><h1>404 NOT FOUND</h1></body></html>";
     response = MHD_create_response_from_buffer (strlen (page), (void *) page,MHD_RESPMEM_PERSISTENT);
     ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, response);
     MHD_destroy_response (response);
+
     return ret;
 }
 
@@ -294,7 +300,7 @@ int main ()
 {
     struct MHD_Daemon *daemon;
 
-    daemon = MHD_start_daemon (MHD_USE_POLL_INTERNALLY, PORT, NULL, NULL,
+    daemon = MHD_start_daemon (MHD_USE_POLL_INTERNALLY | MHD_USE_DEBUG, PORT, NULL, NULL,
                                &WX_Server_Main, NULL, MHD_OPTION_END);
     if (NULL == daemon)
         return 1;
